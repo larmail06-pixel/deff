@@ -36,7 +36,13 @@ const ERRORS = {
   options_count: 'Нужно от 2 до 6 вариантов.',
   empty_option: 'Заполните все варианты.',
   invalid_correct: 'Отметьте правильный вариант.',
-  audio_required: 'Выберите аудиофайл.'
+  audio_required: 'Выберите аудиофайл.',
+  invalid_url: 'Ссылка должна начинаться с http:// или https://',
+  round_not_found: 'Этот тур сейчас недоступен.',
+  round_not_finished: 'Сначала ответьте на все фрагменты тура.',
+  round_full: 'В этом туре уже 10 фрагментов — выберите другой тур или создайте новый.',
+  round_required: 'Выберите тур для фрагмента.',
+  empty_title: 'Название тура не может быть пустым.'
 };
 function errText(e) {
   if (!e) return 'Неизвестная ошибка.';

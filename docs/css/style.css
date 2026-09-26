@@ -142,4 +142,34 @@ footer.foot{padding:24px 0 40px;color:var(--muted);font-size:13px}
 .spinner{display:inline-block;width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px}
 @media (prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
 .disc.loading .center{opacity:.7}
-input[type=email]{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+input[type=email],input[type=url]{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+
+/* блок «Это было» после ответа */
+.reveal{margin-top:14px;padding:14px 16px;border-radius:16px;background:var(--surface-2);border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.reveal-label{font:700 11px/1 var(--display);text-transform:uppercase;letter-spacing:.1em;color:var(--muted);width:100%}
+.reveal-title{margin:0;font-weight:700;flex:1;min-width:180px}
+.reveal a.btn{text-decoration:none}
+
+/* туры */
+select{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+.rounds{display:grid;gap:12px}
+.round-card{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:16px 18px}
+.round-card.done{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.round-disc{--p:0;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--accent) calc(var(--p)*1turn),var(--line) 0);position:relative}
+.round-disc::before{content:"";position:absolute;inset:5px;border-radius:50%;background:repeating-radial-gradient(circle,var(--disc) 0 2px,var(--groove) 2px 3px)}
+.round-disc span{position:relative;width:24px;height:24px;border-radius:50%;background:var(--label);color:#1E1838;display:grid;place-items:center;font:900 12px var(--display)}
+.round-card.done .round-disc{background:conic-gradient(var(--ok) calc(var(--p)*1turn),var(--line) 0)}
+.round-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:600px){.round-card{grid-template-columns:auto 1fr}.round-acts{grid-column:1/-1;justify-content:flex-start}}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;font-weight:600;cursor:pointer;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.round-admin{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:16px}
+.round-admin.off{opacity:.75}
+.round-head{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;margin-bottom:12px}
+.round-head .ord{display:flex;flex-direction:column;gap:2px}
+.round-head .ord button{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;width:28px;height:22px;cursor:pointer;line-height:1}
+.round-head .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:640px){.round-head{grid-template-columns:auto 1fr}.round-head .acts{grid-column:1/-1;justify-content:flex-start}}
+.badge{display:inline-block;font:600 12px/1 var(--body);padding:4px 8px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);vertical-align:middle}
+.badge.full{background:var(--ok-bg);color:var(--ok);border-color:transparent}

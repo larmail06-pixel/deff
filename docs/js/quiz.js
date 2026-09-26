@@ -1,13 +1,39 @@
-/* Страница игрока: вход, регистрация, прохождение квиза, рейтинг. */
-const Q = { session: null, profile: null, isAdmin: false, list: [], view: 'play', busy: false };
+/* Страница игрока: вход, регистрация, туры, прохождение и повтор тура, рейтинг. */
+const Q = {
+  session: null, profile: null, isAdmin: false,
+  view: 'play',        // 'play' | 'board'
+  roundId: null,       // открытый тур; null — список туров
+  boardRound: null,    // тур, выбранный в рейтинге; null — общий
+  busy: false
+};
 
 document.title = (CFG.SITE_NAME || 'На слух') + ' — музыкальный квиз';
 $('#siteName').textContent = CFG.SITE_NAME || 'На слух';
 
-$$('#tabs button').forEach(b => (b.onclick = () => { Q.view = b.dataset.v; stopAudio(); route(); }));
+$$('#tabs button').forEach(b => (b.onclick = () => {
+  stopAudio(); Q.view = b.dataset.v; if (Q.view === 'play') Q.roundId = null; route();
+}));
 
 function stopAudio() { $$('audio').forEach(a => a.pause()); }
 function setTabs() { $$('#tabs button').forEach(b => (b.dataset.v === Q.view ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'))); }
+const openRound = id => { stopAudio(); Q.view = 'play'; Q.roundId = id; route(); };
+const toRounds = () => { stopAudio(); Q.view = 'play'; Q.roundId = null; route(); };
+const loading = text => ($('#main').innerHTML = `<div class="card"><p class="muted"><span class="spinner"></span> ${esc(text)}</p></div>`);
+
+/* Сводка по попыткам тура: текущая, первая (идёт в рейтинг), лучшая. */
+function roundSummary(r) {
+  const at = r.attempts || [];
+  const cur = at.find(a => a.attempt === r.attempt) || { attempt: r.attempt, answered: 0, correct: 0 };
+  const first = at.find(a => a.attempt === 1) || null;
+  const done = at.filter(a => a.answered >= r.total);
+  const best = done.length ? Math.max(...done.map(a => a.correct)) : null;
+  return {
+    cur, first, best,
+    complete: cur.answered >= r.total,
+    firstComplete: !!first && first.answered >= r.total,
+    notStarted: r.attempt === 1 && cur.answered === 0
+  };
+}
 
 function renderWho() {
   const w = $('#who');
@@ -25,20 +51,8 @@ async function route() {
   if (Q.view === 'board') return renderBoard();
   if (!Q.session) return renderLogin(main, { title: 'Вход в квиз', text: 'Введите почту — пришлём ссылку и код для входа. Если вы здесь впервые, после входа останется придумать имя для рейтинга.' });
   if (!Q.profile) return renderProfileForm(null);
-  await loadState();
-  const next = Q.list.find(q => !q.answered);
-  if (!Q.list.length) {
-    main.innerHTML = `<div class="card"><h2>Фрагментов пока нет</h2><p class="muted">${Q.isAdmin ? 'Добавьте первый фрагмент в <a href="admin.html">админ-панели</a>.' : 'Организатор ещё не выложил музыку. Загляните позже.'}</p></div>`;
-    return;
-  }
-  if (!next) return renderFinished();
-  renderQuestion(next);
-}
-
-async function loadState() {
-  const { data, error } = await sb.rpc('quiz_state');
-  if (error) { toast(errText(error)); Q.list = []; return; }
-  Q.list = data || [];
+  if (Q.roundId) return renderRound(Q.roundId);
+  return renderRoundList();
 }
 
 /* ---------- регистрация / профиль ---------- */
@@ -85,13 +99,88 @@ function renderProfileForm(existing) {
 }
 
 /* ---------- вопрос ---------- */
-function renderQuestion(q) {
-  const done = Q.list.filter(x => x.answered).length;
-  const ok = Q.list.filter(x => x.is_correct).length;
+
+/* ---------- список туров ---------- */
+async function renderRoundList() {
+  loading('Загружаем туры…');
+  const { data, error } = await sb.rpc('quiz_rounds');
+  if (Q.view !== 'play' || Q.roundId) return;
+  const main = $('#main');
+  if (error) { main.innerHTML = `<div class="card"><p class="err">${esc(errText(error))}</p></div>`; return; }
+  const rounds = data || [];
+  if (!rounds.length) {
+    main.innerHTML = `<div class="card"><h2>Туров пока нет</h2><p class="muted">${Q.isAdmin ? 'Создайте тур и добавьте фрагменты в <a href="admin.html">админ-панели</a>.' : 'Организатор ещё не выложил музыку. Загляните позже.'}</p></div>`;
+    return;
+  }
+  const sums = rounds.map(roundSummary);
+  const doneCount = sums.filter(s => s.firstComplete).length;
+  main.innerHTML = `
+  <div class="section-head"><div><h2>Туры</h2>
+    <p class="muted small" style="margin:0">Пройдено ${doneCount} из ${rounds.length}. В рейтинг идёт первая попытка каждого тура, повторные — для тренировки.</p></div></div>
+  <div class="rounds">${rounds.map((r, i) => {
+    const s = sums[i];
+    let status, actions;
+    if (s.notStarted) {
+      status = `<span class="muted">Не начат</span>`;
+      actions = `<button class="btn sm" data-open="${r.id}">Начать</button>`;
+    } else if (!s.complete) {
+      status = `Попытка ${r.attempt}: отвечено ${s.cur.answered} из ${r.total}`;
+      actions = `<button class="btn sm" data-open="${r.id}">Продолжить</button>`;
+    } else {
+      status = `Результат: <b>${s.cur.correct} из ${r.total}</b>`;
+      actions = `<button class="btn ghost sm" data-open="${r.id}">Итог</button><button class="btn sm" data-restart="${r.id}">Пройти заново</button>`;
+    }
+    const extra = r.attempt > 1 && s.first
+      ? `<p class="small muted" style="margin:0">В рейтинге: ${s.first.correct} из ${r.total}${s.best != null ? ` · лучший: ${s.best}` : ''} · попыток: ${r.attempt}</p>` : '';
+    const pctDone = s.notStarted ? 0 : (s.complete ? s.cur.correct / r.total : s.cur.answered / r.total);
+    return `<div class="round-card ${s.complete ? 'done' : ''}">
+      <div class="round-disc" style="--p:${pctDone}" aria-hidden="true"><span>${i + 1}</span></div>
+      <div class="round-body">
+        <h3 style="margin:0">${esc(r.title)}</h3>
+        <p class="small muted" style="margin:0">${r.total} ${plural(r.total, 'фрагмент', 'фрагмента', 'фрагментов')}</p>
+        <p class="small" style="margin:4px 0 0">${status}</p>${extra}
+      </div>
+      <div class="round-acts">${actions}</div>
+    </div>`;
+  }).join('')}</div>`;
+  $$('[data-open]').forEach(b => (b.onclick = () => openRound(b.dataset.open)));
+  $$('[data-restart]').forEach(b => (b.onclick = () => restartRound(b.dataset.restart, b)));
+}
+
+async function restartRound(id, btn) {
+  if (btn) btn.disabled = true;
+  const { error } = await sb.rpc('restart_round', { p_round: id });
+  if (error) { if (btn) btn.disabled = false; toast(errText(error)); return; }
+  toast('Новая попытка — удачи!');
+  openRound(id);
+}
+
+/* ---------- тур ---------- */
+async function renderRound(id) {
+  loading('Загружаем тур…');
+  const { data: st, error } = await sb.rpc('round_state', { p_round: id });
+  if (Q.view !== 'play' || Q.roundId !== id) return;
+  if (error) {
+    toast(errText(error));
+    if (/round_not_found/.test(error.message)) toRounds();
+    else $('#main').innerHTML = `<div class="card"><p class="err">${esc(errText(error))}</p></div>`;
+    return;
+  }
+  st.total = st.questions.length;
+  const next = st.questions.find(q => !q.answered);
+  if (!st.total) { toast('В этом туре пока нет фрагментов'); return toRounds(); }
+  if (!next) return renderRoundResult(st);
+  renderQuestion(next, st);
+}
+
+function renderQuestion(q, st) {
+  const done = st.questions.filter(x => x.answered).length;
+  const ok = st.questions.filter(x => x.is_correct).length;
   $('#main').innerHTML = `
   <div class="card">
+    <p class="small" style="margin:0 0 12px"><button class="linkbtn" id="back">← Все туры</button></p>
     <div class="progress-line">
-      <span class="qnum">Фрагмент ${done + 1} из ${Q.list.length}</span>
+      <span class="qnum">${esc(st.title)} · фрагмент ${done + 1} из ${st.total}${st.attempt > 1 ? ` · попытка ${st.attempt}` : ''}</span>
       <span class="score">${ok} <small>${plural(ok, 'верный ответ', 'верных ответа', 'верных ответов')}</small></span>
     </div>
     <div class="stage">
@@ -105,10 +194,12 @@ function renderQuestion(q) {
           ? 'Вы уже открывали этот фрагмент — время ответа идёт с первого запуска.'
           : 'Нажмите на пластинку. Время ответа засекается с этого момента.'}</p>
         <div class="feedback" id="fb" aria-live="polite"></div>
+        <div id="reveal"></div>
       </div>
     </div>
     <audio id="aud" preload="auto"></audio>
   </div>`;
+  $('#back').onclick = toRounds;
 
   const aud = $('#aud'), disc = $('#disc');
   let data = null, answered = false, raf;
@@ -158,61 +249,93 @@ function renderQuestion(q) {
       const j = +b.dataset.i;
       b.classList.add(j === r.correct_index ? 'right' : j === r.choice ? 'wrong' : 'locked');
     });
-    q.answered = true; q.is_correct = r.is_correct;
     $('#hint').textContent = '';
     $('#fb').innerHTML = `<strong class="${r.is_correct ? 'ok' : 'no'}">${r.is_correct ? 'Верно!' : 'Мимо.'}</strong>
       <span class="muted">${r.is_correct ? 'Ответ за ' + fmtMs(r.response_ms) : 'Правильно: ' + esc(data.options[r.correct_index])}</span>
-      <button class="btn" id="nextQ" style="margin-left:auto">${Q.list.some(x => !x.answered) ? 'Следующий фрагмент' : 'Посмотреть итог'}</button>`;
+      <button class="btn" id="nextQ" style="margin-left:auto">${r.round_complete ? 'Итог тура' : 'Следующий фрагмент'}</button>`;
     $('#nextQ').onclick = () => { aud.pause(); route(); };
+    const url = /^https?:\/\/\S+$/i.test(r.reveal_url || '') ? r.reveal_url : null;
+    if (r.reveal_text || url) {
+      $('#reveal').innerHTML = `<div class="reveal"><span class="reveal-label">Это было</span>
+        ${r.reveal_text ? `<p class="reveal-title">${esc(r.reveal_text)}</p>` : ''}
+        ${url ? `<a class="btn ghost sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Слушать полностью ↗</a>` : ''}</div>`;
+      const link = $('#reveal a'); if (link) link.onclick = () => aud.pause();
+    }
     $('#nextQ').focus();
   }
 }
 
-async function renderFinished() {
-  const ok = Q.list.filter(x => x.is_correct).length, total = Q.list.length;
-  const { data } = await sb.rpc('leaderboard', { p_limit: 10 });
-  const me = data?.rows?.find(r => r.is_me);
+/* ---------- итог тура ---------- */
+async function renderRoundResult(st) {
+  const s = roundSummary({ ...st, total: st.total });
+  const ok = s.cur.correct, total = st.total;
+  const [lb, list] = await Promise.all([
+    sb.rpc('leaderboard', { p_limit: 10, p_round: st.id }),
+    sb.rpc('quiz_rounds')
+  ]);
+  if (Q.view !== 'play' || Q.roundId !== st.id) return;
+  const me = lb.data?.rows?.find(r => r.is_me);
+  const rounds = list.data || [];
+  const idx = rounds.findIndex(r => r.id === st.id);
+  const nextRound = rounds.slice(idx + 1).concat(rounds.slice(0, Math.max(idx, 0)))
+    .find(r => !roundSummary(r).complete);
   $('#main').innerHTML = `
   <div class="card">
+    <p class="small" style="margin:0 0 12px"><button class="linkbtn" id="back">← Все туры</button></p>
     <div class="stage">
       <div class="disc" aria-hidden="true" style="--p:${total ? ok / total : 0};cursor:default"><span class="ring"></span><span class="vinyl"></span>
         <span class="center" style="font:900 28px var(--display)">${pct(ok, total)}%</span></div>
       <div>
-        <p class="prompt">Все фрагменты прослушаны</p>
-        <p>Вы угадали ${ok} из ${total}.${me ? ` Сейчас вы на ${me.rank}-м месте.` : ''}</p>
-        <p class="muted">Когда появятся новые фрагменты, они будут ждать вас здесь.</p>
-        <button class="btn" id="toBoard">Открыть рейтинг</button>
+        <p class="qnum" style="margin:0 0 8px">${esc(st.title)}${st.attempt > 1 ? ` · попытка ${st.attempt}` : ''}</p>
+        <p class="prompt">Тур пройден: ${ok} из ${total}</p>
+        ${st.attempt > 1 && s.first
+          ? `<p>В рейтинге учитывается первая попытка: <b>${s.first.correct} из ${total}</b>${s.best != null ? `. Лучший результат: ${s.best} из ${total}` : ''}.</p>`
+          : `<p>${me ? `В рейтинге этого тура вы на ${me.rank}-м месте.` : ''} Пройти тур заново можно в любой момент — в рейтинг пойдёт этот, первый результат.</p>`}
+        <div class="row" style="margin-top:16px">
+          <button class="btn" id="again">Пройти заново</button>
+          ${nextRound ? `<button class="btn ghost" id="nextRound">Следующий: ${esc(nextRound.title)}</button>` : ''}
+          <button class="btn ghost" id="toBoard">Рейтинг тура</button>
+        </div>
       </div>
     </div>
   </div>`;
-  $('#toBoard').onclick = () => { Q.view = 'board'; route(); };
+  $('#back').onclick = toRounds;
+  $('#again').onclick = () => restartRound(st.id, $('#again'));
+  if (nextRound) $('#nextRound').onclick = () => openRound(nextRound.id);
+  $('#toBoard').onclick = () => { Q.view = 'board'; Q.boardRound = st.id; route(); };
 }
 
 /* ---------- рейтинг (доступен без входа) ---------- */
 async function renderBoard() {
-  const main = $('#main');
-  main.innerHTML = '<div class="card"><p class="muted"><span class="spinner"></span> Загружаем рейтинг…</p></div>';
-  const { data, error } = await sb.rpc('leaderboard', { p_limit: 100 });
+  loading('Загружаем рейтинг…');
+  const { data, error } = await sb.rpc('leaderboard', { p_limit: 100, p_round: Q.boardRound });
   if (Q.view !== 'board') return;
+  const main = $('#main');
   if (error) { main.innerHTML = `<div class="card"><p class="err">${esc(errText(error))}</p></div>`; return; }
-  const rows = data.rows || [];
+  const rows = data.rows || [], rounds = data.rounds || [];
+  if (Q.boardRound && !rounds.some(r => r.id === Q.boardRound)) { Q.boardRound = null; return renderBoard(); }
   main.innerHTML = `
   <div class="section-head"><div><h2>Рейтинг</h2>
-    <p class="muted small" style="margin:0">Сначала по числу верных ответов, при равенстве — по среднему времени. Фрагментов в игре: ${data.total_questions}.</p></div>
+    <p class="muted small" style="margin:0">По первой попытке каждого тура: сначала число верных ответов, при равенстве — среднее время. Фрагментов: ${data.total_questions}.</p></div>
     ${Q.session ? '' : '<button class="btn" id="joinBtn">Играть</button>'}</div>
+  ${rounds.length > 1 ? `<div class="chips" role="tablist" aria-label="Тур">
+    <button class="chip" data-round="" ${Q.boardRound ? '' : 'aria-pressed="true"'}>Общий</button>
+    ${rounds.map(r => `<button class="chip" data-round="${r.id}" ${Q.boardRound === r.id ? 'aria-pressed="true"' : ''}>${esc(r.title)}</button>`).join('')}
+  </div>` : ''}
   ${rows.length ? `<div class="table-wrap"><table>
     <thead><tr><th>Место</th><th>Игрок</th><th class="num">Верно</th><th class="num">Отвечено</th><th class="num">Точность</th><th class="num">Ср. время</th></tr></thead>
     <tbody>${rows.map(r => `<tr class="${r.is_me ? 'me-row' : ''}"><td class="place">${r.rank}</td>
       <td>${r.nickname ? esc(r.nickname) : '<span class="muted">Скрытый игрок</span>'}${r.is_me ? ' <span class="muted small">— вы</span>' : ''}</td>
       <td class="num">${r.correct}</td><td class="num">${r.answered}</td><td class="num">${pct(r.correct, r.answered)}%</td><td class="num">${fmtMs(r.avg_ms)}</td></tr>`).join('')}</tbody>
   </table></div>` : '<div class="notice">Пока никто не ответил ни на один фрагмент. Станьте первым!</div>'}`;
-  const j = $('#joinBtn'); if (j) j.onclick = () => { Q.view = 'play'; route(); };
+  $$('[data-round]').forEach(b => (b.onclick = () => { Q.boardRound = b.dataset.round || null; renderBoard(); }));
+  const j = $('#joinBtn'); if (j) j.onclick = () => { Q.view = 'play'; Q.roundId = null; route(); };
 }
 
 /* ---------- запуск ---------- */
 if (!CONFIGURED) renderNotConfigured($('#main'));
 else onAuth(async session => {
-  Q.session = session; Q.profile = null; Q.isAdmin = false;
+  Q.session = session; Q.profile = null; Q.isAdmin = false; Q.roundId = null;
   if (session) {
     const [p, a] = await Promise.all([
       sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle(),
